@@ -10,10 +10,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-DEV_TAG?=latest
-DEV_REPO?=${USER}/cluster-addons-bootstrap
-DEV_IMG?=$(DEV_REPO):$(DEV_TAG)
-IMG?=$(DEV_IMG)
+# NOTE: these variables are used by tekton pipeline to determine build agent 
+# change with care
+ECR_REGISTRY_URL:=277152405283.dkr.ecr.ap-southeast-1.amazonaws.com
+
+REPO?=thirdparty/cluster-addons-bootstrap
+IMG?=${ECR_REGISTRY_URL}/$(REPO):$(TAG)
+TAG?=0.0.1
 ARCH?=amd64
 
 .PHONY: build
@@ -33,8 +36,12 @@ docker-image:
   # BuildKit requires Docker >= 18.09
 	DOCKER_BUILDKIT=1 docker build --platform=linux/$(ARCH) . -t $(IMG)
 
-docker-push: docker-image
+docker-push: docker-image ecr-login
 	docker push $(IMG)
+
+.PHONY: ecr-login
+ecr-login:
+	aws ecr get-login-password | docker login -u AWS --password-stdin $(ECR_REGISTRY_URL)
 
 fmt:
 	go fmt ./...

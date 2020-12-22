@@ -13,7 +13,7 @@ FROM --platform=$BUILDPLATFORM ubuntu:20.04 as kubectl
 ARG TARGETARCH
 RUN apt-get update
 RUN apt-get install -y curl
-RUN curl -fsSL https://dl.k8s.io/release/v1.17.4/bin/linux/${TARGETARCH}/kubectl > /usr/bin/kubectl
+RUN curl -fsSL https://dl.k8s.io/release/v1.19.4/bin/linux/${TARGETARCH}/kubectl > /usr/bin/kubectl
 RUN ! ldd /usr/bin/kubectl # Assert that the downloaded kubectl is statically linked
 RUN chmod a+rx /usr/bin/kubectl
 

@@ -19,6 +19,7 @@ package app
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -30,6 +31,10 @@ import (
 	"time"
 
 	"k8s.io/klog/v2"
+
+	"github.com/phelian/goelector"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 const (
@@ -90,11 +95,13 @@ type addonManager struct {
 	kubectlPath          string
 	leaderElection       bool
 	pruneWhitelistFlags  []string
+	clientSet            *kubernetes.Clientset
 
 	// stubbable for testing
 	kubectl func(stdout, stderr io.Writer, args ...string) error
 }
 
+// AddonManager create manager instance with function to look up environment config
 func AddonManager(env func(key string) string) (*addonManager, error) {
 	am := &addonManager{
 		addonPath:            "/etc/kubernetes/addons",
@@ -105,6 +112,7 @@ func AddonManager(env func(key string) string) (*addonManager, error) {
 		kubectlPath:          "/usr/bin/kubectl",
 		leaderElection:       true,
 	}
+
 	am.kubectl = am.kubectlExec
 	if addonPath := env("ADDON_PATH"); addonPath != "" {
 		am.addonPath = addonPath
@@ -118,6 +126,16 @@ func AddonManager(env func(key string) string) (*addonManager, error) {
 			return nil, fmt.Errorf("error converting ADDON_MANAGER_LEADER_ELECTION value %q to bool: %v", amle, err)
 		}
 		am.leaderElection = b
+		if b {
+			config, err := rest.InClusterConfig()
+			if err != nil {
+				return nil, fmt.Errorf("LeaderElection: error loading k8s inClusterConfig: %v", err)
+			}
+			am.clientSet, err = kubernetes.NewForConfig(config)
+			if err != nil {
+				return nil, fmt.Errorf("LeaderElection: error creating k8s clientSet: %v", err)
+			}
+		}
 	}
 	if testIntervalSec := env("TEST_ADDON_CHECK_INTERVAL_SEC"); testIntervalSec != "" {
 		secs, err := strconv.ParseInt(testIntervalSec, 10, 64)
@@ -159,9 +177,25 @@ func (m *addonManager) Run() error {
 			klog.Errorf("Could not create admissions control objects: %v", err)
 		}
 	}
+
+	// start Elector
+	electorConf := &goelector.Config{
+		LeaseDuration: 15,
+		RenewDeadline: 10,
+		RetryPeriod:   2,
+		Lock:          "cluster-addon-bootstrapper",
+		Namespace:     "kube-system",
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	goelector.TurnOffKlog()
+	if err := goelector.Start(ctx, electorConf, m.hostname, m.clientSet); err != nil {
+		return fmt.Errorf("LeaderElection: error starting elector: %v", err)
+	}
+
 	ticker := time.NewTicker(m.checkInterval)
 	for ; true; <-ticker.C { // Run immediately, then after every tick.
-		if !m.leaderElection || m.isLeader() {
+		if !m.leaderElection || goelector.IsLeader() {
 			m.ensureAddons()
 			m.reconcileAddons()
 		} else {
@@ -215,30 +249,6 @@ func (m *addonManager) ensureDefaultAdmissionControlsObjects() error {
 			}
 			return err
 		})
-}
-
-// IsLeader returns whether this instance of addonManager should act as leader in a multi-master cluster.
-func (m *addonManager) isLeader() bool {
-	var out, errOut bytes.Buffer
-	klog.Info("== Determining addon-manager leader ==")
-	// TODO: Do a real leader election instead of piggybacking off of KCM
-	err := m.kubectl(&out, &errOut, m.kubectlOpts, "-n", systemNamespace, "get", "ep", "kube-controller-manager", "-o", `go-template={{index .metadata.annotations "control-plane.alpha.kubernetes.io/leader"}}`)
-	filterLog(&errOut, "", klog.Warning)
-	if err != nil {
-		// If the leader can't be positively established, assume that we're it
-		return true
-	}
-	holderIdentity := extractHolderIdentity(out.String())
-	return holderIdentity == "" || strings.HasPrefix(holderIdentity, m.hostname+"_")
-}
-
-func extractHolderIdentity(raw string) string {
-	captureGroups := leaderRegexp.FindStringSubmatch(raw)
-	if len(captureGroups) != 2 {
-		// A match yields one capture group (index 1)
-		return ""
-	}
-	return captureGroups[1]
 }
 
 func (m *addonManager) reconcileAddons() {
