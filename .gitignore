@@ -1,4 +1,2 @@
-vendor/
-# Emacs
-*~
-\#*\#
+cover.out
+old/

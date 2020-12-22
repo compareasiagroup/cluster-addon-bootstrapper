@@ -1,57 +1,27 @@
-# Cluster Addons
+# Cluster Addon Bootstrapper
 
-Cluster Addons is a sub-project of [SIG-Cluster-Lifecycle](https://github.com/kubernetes/community/tree/master/sig-cluster-lifecycle). Addon management has been a problem of cluster tooling for a long time.
+Fork of https://github.com/kubernetes-sigs/cluster-addons - bootstrapper
 
-This sub-project wants to figure out the best way to install, manage and deliver cluster addons.
 
-In this repository we explore ideas for all of the above. [Cluster addon operators](https://github.com/kubernetes/enhancements/blob/master/keps/sig-cluster-lifecycle/addons/0035-20190128-addons-via-operators.md) in particular.
+cluster-addons-bootstrap manages two classes of addons with given template files in
+`$ADDON_PATH` (default `/etc/kubernetes/addons/`).
+- Addons with label `addonmanager.kubernetes.io/mode=Reconcile` will be periodically
+reconciled. Direct manipulation to these addons through apiserver is discouraged because
+addon-manager will bring them back to the original state. In particular:
+	- Addon will be re-created if it is deleted.
+	- Addon will be reconfigured to the state given by the supplied fields in the template
+	file periodically.
+	- Addon will be deleted when its manifest file is deleted from the `$ADDON_PATH`.
+- Addons with label `addonmanager.kubernetes.io/mode=EnsureExists` will be checked for
+existence only. Users can edit these addons as they want. In particular:
+	- Addon will only be created/re-created with the given template file when there is no
+	instance of the resource with that name.
+	- Addon will not be deleted when the manifest file is deleted from the `$ADDON_PATH`.
 
-With cluster addon operators, we are exploring a kubernetes-native way of managing addons using CRDs(Custom Resource Definitions) and controllers where the controllers encode how best to manage the addon. Installing and managing an addon could be as simple as creating a custom resource.
-
-We are also exploring other concepts such as managing different simple addons with a single controller to reduce consumption of resources and make it dead simple to manage addons. We welcome you to create your own addon operators and try using the ones created by this community.
-
-## Frequently asked questions
-
-> What is this?
-
-Born out of the discussion in the [original KEP PR](https://github.com/kubernetes/enhancements/pull/746), we set up the sub-project with the goal to explore addon operators, since then we took on a number of other challenges.
-
-> What is this not?
-
-This sub-project is not interested in maintaining all cluster addons. Here we want to create some design patterns, some libraries, some supporting tooling, so everybody can easily create their own operators.
-
-Not everything will need a cluster addon. Not everyone will want to use an operator.
-
-> What is a cluster addon?
-
-The lifecycle of a cluster addon is managed alongside the lifecycle of the cluster. Typically it has to be upgraded/downgraded when you move to a newer Kubernetes version. We want to use operators for this: a CRD describes the addon, and then the code which installs whatever the addon does, controlled by the CRD.
-
-> How do I build my own cluster addon operator?
-
-We have created a tutorial on how to create your own addon operator [here](https://github.com/kubernetes-sigs/cluster-addons/tree/master/walkthrough.md)
-
-> What's your current agenda and timeline?
-
-We
-
-- created an actual [addon operator we deemed as straight-forward](https://github.com/kubernetes-sigs/cluster-addons/tree/master/coredns), so we have actual code to look
-- wrote an [installer library](https://github.com/kubernetes-sigs/cluster-addons/tree/master/installer) to install addons into the cluster
-- added support for [addon operators to kubebuilder](https://github.com/kubernetes-sigs/kubebuilder/tree/master/plugins)
-- started work on integrating the addon installer into kubeadm and kops
-- had a look getting agreement on manifest bundles
-- started quite a few other experiments
-
-> Who does this?
-
-Cluster addons is a community project. If you're interested in building this, please get in touch. We're all ears!
-
-## Community, discussion, contribution, and support
-
-Learn how to engage with the Kubernetes community on the [community page](http://kubernetes.io/community/).
-
-Check out up to date information about where discussions and meetings happen on
-the [community page of SIG Cluster Lifecycle](https://github.com/kubernetes/community/tree/master/sig-cluster-lifecycle).
-
-### Code of conduct
-
-Participation in the Kubernetes community is governed by the [Kubernetes Code of Conduct](code-of-conduct.md).
+Notes:
+- Label `kubernetes.io/cluster-service=true` is deprecated (for this utility).
+In a future release,cluster-addons-bootstrap may not respect it anymore. Addons
+have this label but without `addonmanager.kubernetes.io/mode=EnsureExists` will be
+treated as "reconcile class addons" for now.
+- Resources under `$ADDON_PATH` need to have either one of these two labels.
+Otherwise it will be omitted.
